@@ -3,4 +3,19 @@ name = "luxonis"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"
+
 [dependencies]
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1.12.1", features = ["v4", "fast-rng", "macro-diagnostics"] }
+postcard = "1.0.0"
+
+# By default, `serde` has the `std` feature enabled, which makes it unsuitable for embedded targets
+# disabling default-features fixes this
+serde = { version = "1.0.*", default-features = false }
