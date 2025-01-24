@@ -1,17 +1,20 @@
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[derive(Serialize, Deserialize)]
+#[repr(u8)]
 pub enum ServerMessage {
-    AskPassword,
-    WrongPassword,
+    AskPassword = 0,
+    WrongPassword = 1,
     /***
       ID has been assigned to a new connected client
     */
-    AssignId(Uuid),
-    BadRequest,
+    AssignId(Uuid) = 2,
+    BadRequest = 3,
     /***
       Response to `GetOpponents`
     */
-    ListOpponents(Vec<Uuid>),
+    ListOpponents(Vec<String>),
     /***
       Response for Challenger that the Match with (Guesser) has been started
     */
@@ -27,7 +30,7 @@ pub enum ServerMessage {
     MatchStatus((Uuid, u32)),
     /***
       Challenger can send a hint to Guesser
-      (Challenger, Guesser, CorrectAnswer, Attempts)
+      (Challenger, Hint)
     */
     MatchHint((Uuid, String)),
     /***
