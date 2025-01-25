@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[repr(u8)]
 pub enum ServerMessage {
     AskPassword = 0,
@@ -40,6 +40,8 @@ pub enum ServerMessage {
     MatchEnded((Uuid, Uuid, bool, u32)),
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+#[repr(u8)]
 pub enum ClientMessage {
     AnswerPassword(String),
     GetOpponents,
