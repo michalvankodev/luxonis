@@ -38,6 +38,7 @@ pub enum ServerMessage {
       (Challenger, Guesser, CorrectAnswer, Attempts)
     */
     MatchEnded((Uuid, Uuid, bool, u32)),
+    Disconnect,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

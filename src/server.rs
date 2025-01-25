@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use connection::{send_to_connection, Connection};
+use connection::Connection;
 use log::{debug, error, info, trace};
 use protocol::{ClientMessage, ServerMessage};
 use rmp_serde::Serializer;
@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
     fs::remove_file,
-    io::{AsyncBufReadExt, BufReader},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, UnixListener},
     select, signal,
     sync::{
@@ -23,7 +23,7 @@ mod protocol;
 const TCP_ADDR: &str = "127.0.0.1:3301";
 const UNIX_ADDR: &str = "/tmp/luxonis.sock";
 
-type ActiveConnections = Arc<RwLock<HashMap<Uuid, Arc<RwLock<Connection>>>>>;
+type ActiveConnections = Arc<RwLock<HashMap<Uuid, Connection>>>;
 
 /***
   Server for "guess a word" game
@@ -39,7 +39,7 @@ async fn main() {
     debug!("TCP listener started at: {UNIX_ADDR}");
 
     let mut active_connections: ActiveConnections =
-        Arc::new(RwLock::new(HashMap::<Uuid, Arc<RwLock<Connection>>>::new()));
+        Arc::new(RwLock::new(HashMap::<Uuid, Connection>::new()));
 
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -51,13 +51,9 @@ async fn main() {
             // Handle incoming TCP connections.
             tcp_conn = tcp_listener.accept() => {
                 match tcp_conn {
-                    Ok((stream, addr)) => {
-                        debug!("New TCP connection from: {}", addr);
-                        let mut connections = active_connections.clone();
-                        let tx_clone = tx.clone();
-                        tokio::spawn(async move {
-                            let _ = process_socket(Connection::Tcp(stream), tx_clone, &mut connections).await;
-                        });
+                    Ok((stream, _addr)) => {
+                        // let mut connections = active_connections.clone();
+                        let _ = handle_client(stream, tx.clone(), &mut active_connections).await;
                     }
                     Err(e) => {
                         error!("Failed to accept TCP connection: {}", e);
@@ -68,13 +64,10 @@ async fn main() {
             unix_conn = unix_listener.accept() => {
                 match unix_conn {
                     Ok((stream, _addr)) => {
-                         let mut connections = active_connections.clone();
-                         let tx_clone = tx.clone();
-                        tokio::spawn(async move {
-                        debug!("New Unix socket connection");
-                        let _ = process_socket(Connection::Unix(stream), tx_clone, &mut connections).await;
-                    });
+                        // let mut connections = active_connections.clone();
+                        let _ = handle_client(stream, tx.clone(), &mut active_connections).await;
                     }
+
                     Err(e) => {
                         error!("Failed to accept Unix socket connection: {}", e);
                     }
@@ -82,20 +75,16 @@ async fn main() {
             },
             rx_msg = rx.recv() => {
                 let mut connections = active_connections.clone();
-
-                tokio::spawn(async move {
-                    match rx_msg {
-                        Some((player_id, msg)) => {
-                          let _ = react_to_client_msg(&player_id, msg, &mut connections).await;
-                        }
-                        None => {
-                            error!("Invalid msg sent to receiver");
-                        }
+                trace!("Received message: {:?}",rx_msg);
+                match rx_msg {
+                    Some((player_id, msg)) => {
+                      let _ = react_to_client_msg(&player_id, msg, &mut connections).await;
                     }
-                });
-
-            }
-
+                    None => {
+                        error!("Invalid msg sent to receiver");
+                    }
+                }
+            },
             _ = signal::ctrl_c() => {
                 break;
             }
@@ -110,75 +99,111 @@ async fn main() {
     let _ = remove_file(UNIX_ADDR).await; // Clean up if the file already exists.
 }
 
-async fn process_socket(
-    connection: Connection,
-    tx: Sender<(Uuid, ClientMessage)>,
-    active_connections: &mut ActiveConnections,
-) -> Result<(), anyhow::Error> {
-    debug!("we have a socket");
-    // let connections_clone = active_connections.clone();
+// Generic client handler for any AsyncRead + AsyncWrite stream
+async fn handle_client<S>(
+    stream: S,
+    main_tx: Sender<(Uuid, ClientMessage)>,
+    connections: &mut ActiveConnections,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let player_id = Uuid::new_v4();
+    let (mut reader, mut writer) = tokio::io::split(stream);
+
+    // Create a channel for sending messages to this client
+    let (client_tx, mut client_rx) = mpsc::channel::<ServerMessage>(100);
+
     {
-        let mut connections = active_connections.write().await;
-        let connection_arc = Arc::new(RwLock::new(connection));
-        connections.insert(player_id, connection_arc.clone());
-        tokio::spawn(async move {
-            let connection = connection_arc.clone();
-            loop {
-                let mut connection = connection.write().await;
-                let msg = read_client_msg(&mut connection).await.unwrap();
-                trace!("Message from client parsed: {:?}", msg);
-                tx.send((player_id, msg)).await.unwrap();
-            }
-        });
+        let mut conns = connections.write().await;
+        conns.insert(
+            player_id,
+            Connection {
+                tx: client_tx.clone(),
+            },
+        );
     }
 
-    send_message(active_connections, &player_id, ServerMessage::AskPassword).await;
-    info!("New tcp connection: {}", player_id);
-    Ok(())
-}
+    println!("Client connected: {}", player_id);
 
-async fn read_client_msg(connection: &mut Connection) -> Result<ClientMessage, anyhow::Error> {
-    let mut buf = Vec::<u8>::new();
-    match connection {
-        Connection::Tcp(ref mut stream) => {
-            let mut buf_reader = BufReader::new(stream);
-            buf_reader.read_until(b'\0', &mut buf).await?;
+    let _read_task = tokio::spawn({
+        let connections = Arc::clone(connections);
+        async move {
+            let mut buf = vec![0; 1024];
+            loop {
+                trace!("at the start of the loop {:?}", player_id);
+                match reader.read(&mut buf).await {
+                    Ok(0) => {
+                        // Connection closed
+                        println!("Client disconnected: {}", player_id);
+                        break;
+                    }
+                    Ok(n) => {
+                        // Process the message (e.g., routing or broadcasting)
+                        trace!("Message from client received: {:?}", &buf);
+                        if let Ok(msg) = rmp_serde::from_slice::<ClientMessage>(&buf[..n])
+                            .map_err(|e| anyhow!("Error parsing ClientMessage: {e:?}"))
+                        {
+                            trace!("Parsed Message from client: {:?}", msg);
+                            let _ = main_tx.send((player_id, msg)).await;
+
+                            trace!("Message sent to the main tx {:?}", player_id);
+                        };
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading from {}: {:?}", player_id, e);
+                        break;
+                    }
+                }
+                trace!("at the end of the loop {:?}", player_id);
+            }
+
+            // Remove the connection from the shared HashMap
+            {
+                let mut conns = connections.write().await;
+                conns.remove(&player_id);
+            }
+
+            println!("Connection with {} closed", player_id);
         }
-        Connection::Unix(ref mut stream) => {
-            let mut buf_reader = BufReader::new(stream);
-            buf_reader.read_until(b'\0', &mut buf).await?;
+    });
+
+    let _write_task = tokio::spawn(async move {
+        while let Some(msg) = client_rx.recv().await {
+            trace!("Sending msg {:?}", msg);
+            let mut payload = Vec::new();
+            msg.serialize(&mut Serializer::new(&mut payload)).unwrap();
+
+            if writer.write_all(&payload).await.is_err() {
+                eprintln!("Error writing to {}", player_id);
+                break;
+            }
+            trace!("Message sent {:?}", msg);
         }
-    };
-    trace!("Message from client received: {:?}", &buf);
-    rmp_serde::from_slice::<ClientMessage>(&buf)
-        .map_err(|e| anyhow!("Error parsing ServerMessage: {e:?}"))
+    });
+
+    let _ = client_tx.send(ServerMessage::AskPassword).await;
+
+    Ok(())
 }
 
 async fn send_message(
     active_connections: &mut ActiveConnections,
     player_id: &Uuid,
     msg: ServerMessage,
-) {
+) -> Result<(), anyhow::Error> {
     let mut connections = active_connections.write().await;
-    let connection = connections.get_mut(player_id).map(|conn| conn.write());
+    let connection = connections.get_mut(player_id).unwrap().clone();
+    drop(connections);
 
     trace!("Message about to be sent");
-    match connection {
-        Some(conn) => {
-            trace!("Before LOCK {:?}", msg);
-            // TODO here we have a deadlock
-            let mut conn = conn.await;
-            let mut payload = Vec::new();
-            msg.serialize(&mut Serializer::new(&mut payload)).unwrap();
-            trace!("About to send {:?}", msg);
-            send_to_connection(&mut conn, &payload).await;
-            trace!("Message sent");
-        }
-        None => {
-            error!("Active connection for {player_id} not found");
-        }
-    }
+    trace!("Before LOCK {:?}", msg);
+    let mut payload = Vec::new();
+    msg.serialize(&mut Serializer::new(&mut payload))?;
+    trace!("About to send {:?}", msg);
+    connection.tx.send(msg).await?;
+    trace!("Message sent");
+    Ok(())
 }
 
 async fn react_to_client_msg(
@@ -188,9 +213,10 @@ async fn react_to_client_msg(
 ) -> Result<(), anyhow::Error> {
     match msg {
         ClientMessage::AnswerPassword(password) => {
+            debug!("password attempt");
             if password.eq("password") {
                 let response = ServerMessage::AssignId(*player_id);
-                send_message(connections, player_id, response).await;
+                send_message(connections, player_id, response).await?;
             }
         }
         ClientMessage::GetOpponents => todo!(),

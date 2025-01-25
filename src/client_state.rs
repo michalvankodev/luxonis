@@ -43,6 +43,9 @@ impl ClientState {
             ServerMessage::MatchStatus(_) => todo!(),
             ServerMessage::MatchHint(_) => todo!(),
             ServerMessage::MatchEnded(_) => todo!(),
+            ServerMessage::Disconnect => {
+                self.status = State::Quit;
+            }
         }
     }
 
