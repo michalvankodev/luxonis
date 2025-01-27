@@ -52,4 +52,5 @@ pub enum ClientMessage {
     GuessAttempt((Uuid, String)),
     SendHint((Uuid, String)),
     GiveUp(Uuid),
+    LeaveGame,
 }
