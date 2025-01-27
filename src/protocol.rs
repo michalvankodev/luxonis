@@ -16,7 +16,7 @@ pub enum ServerMessage {
     */
     ListOpponents(Vec<Uuid>),
     /***
-      Response for Challenger that the Match with (Guesser) has been started
+      Response for Challenger that the Match(Uuid) has been started
     */
     MatchAccepted(Uuid),
     /***

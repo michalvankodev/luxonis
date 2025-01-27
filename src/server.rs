@@ -195,7 +195,27 @@ async fn react_to_client_msg(
             let response = ServerMessage::ListOpponents(opponents.clone());
             send_message(connections, player_id, response).await?;
         }
-        ClientMessage::RequestMatch(_) => todo!(),
+        ClientMessage::RequestMatch((opponent, guess_word)) => {
+            if Some(match_id) = server_state.create_new_match((player_id, opponent), guess_word) {
+                send_message(
+                    connections,
+                    &opponent,
+                    ServerMessage::MatchStarted(match_id),
+                );
+                send_message(
+                    connections,
+                    &player_id,
+                    ServerMessage::MatchAccepted(match_id),
+                );
+            } else {
+                send_message(
+                    connections,
+                    player_id,
+                    ServerMessage::BadRequest(ClientRequestError::CannotCreateMatch),
+                )
+                .await?;
+            }
+        }
         ClientMessage::AcceptMatch(_) => todo!(),
         ClientMessage::DeclineMatch(_) => todo!(),
         ClientMessage::GuessAttempt(_) => todo!(),
