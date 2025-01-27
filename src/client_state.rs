@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::protocol::{ClientMessage, ServerMessage};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum State {
     Initial,
     WaitingForPassword,
@@ -59,11 +59,27 @@ impl ClientState {
         }
     }
 
-    pub fn update_from_user(&mut self, input: &str) {
+    pub fn update_from_user(&mut self, input: &str) -> Option<ClientMessage> {
         match self.status {
             State::WaitingForPassword => {
+                // TODO maybe we can skip 2 steps and send message directly
                 self.status = State::SendPassword(input.to_string());
+                None
             }
+            State::MainMenu => match input {
+                "1" => {
+                    printdoc! {
+                        "Getting list of available opponents..."
+                    };
+                    Some(ClientMessage::GetOpponents)
+                }
+                _ => {
+                    printdoc! {
+                        "Invalid input"
+                    };
+                    None
+                }
+            },
             // State::Quit(_) => {
             //     printdoc!(
             //         r#"
@@ -75,7 +91,8 @@ impl ClientState {
                 error!(
                     "User shouldn't be able to input anything while in {:?} state",
                     self.status
-                )
+                );
+                None
             }
         }
     }

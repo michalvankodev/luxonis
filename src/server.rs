@@ -3,6 +3,7 @@ use log::{debug, error, info, trace};
 use protocol::{ClientMessage, ServerMessage};
 use rmp_serde::Serializer;
 use serde::Serialize;
+use server_state::ServerState;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
     fs::remove_file,
@@ -18,6 +19,7 @@ use uuid::Uuid;
 
 mod connection;
 mod protocol;
+mod server_state;
 
 const TCP_ADDR: &str = "127.0.0.1:3301";
 const UNIX_ADDR: &str = "/tmp/luxonis.sock";
@@ -37,6 +39,7 @@ async fn main() {
     let unix_listener = UnixListener::bind(UNIX_ADDR).unwrap();
     debug!("TCP listener started at: {UNIX_ADDR}");
 
+    let server_state = Arc::new(RwLock::new(ServerState::default()));
     let mut active_connections: ActiveConnections =
         Arc::new(RwLock::new(HashMap::<Uuid, Connection>::new()));
 
@@ -74,10 +77,11 @@ async fn main() {
             },
             rx_msg = rx.recv() => {
                 let mut connections = active_connections.clone();
+                let mut server_state = server_state.write().await;
                 trace!("Received message: {:?}",rx_msg);
                 match rx_msg {
                     Some((player_id, msg)) => {
-                      let _ = react_to_client_msg(&player_id, msg, &mut connections).await;
+                      let _ = react_to_client_msg(&player_id, msg, &mut connections, &mut server_state).await;
                     }
                     None => {
                         error!("Invalid msg sent to receiver");
@@ -169,6 +173,7 @@ async fn react_to_client_msg(
     player_id: &Uuid,
     msg: ClientMessage,
     connections: &mut ActiveConnections,
+    server_state: &mut ServerState,
 ) -> Result<(), anyhow::Error> {
     match msg {
         ClientMessage::AnswerPassword(password) => {
@@ -178,7 +183,16 @@ async fn react_to_client_msg(
                 send_message(connections, player_id, response).await?;
             }
         }
-        ClientMessage::GetOpponents => todo!(),
+        ClientMessage::GetOpponents => {
+            let opponents = server_state
+                .available_opponents
+                .iter()
+                .map(|uuid| uuid.to_string())
+                .collect::<Vec<String>>();
+
+            let response = ServerMessage::ListOpponents(opponents);
+            send_message(connections, player_id, response).await?;
+        }
         ClientMessage::RequestMatch(_) => todo!(),
         ClientMessage::AcceptMatch(_) => todo!(),
         ClientMessage::DeclineMatch(_) => todo!(),
@@ -192,10 +206,8 @@ async fn react_to_client_msg(
 }
 
 async fn drop_all_connections(_active_connections: &mut ActiveConnections) {
-    info!("Dropping all active connections");
+    todo!("Dropping all active connections");
 }
-
-// TODO Respond for password
 
 // TODO Documentation
 // TODO readme documentation

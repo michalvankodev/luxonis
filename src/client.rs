@@ -44,18 +44,22 @@ async fn main() -> Result<(), anyhow::Error> {
     let mut user_input = get_user_input_stream();
 
     loop {
+        let previous_status = client_state.status.clone();
         select! {
             server_msg = rx.recv() => {
                 match server_msg {
                     Some(msg) =>  client_state.update_from_server(msg),
                     None => {
-                        error!("Invalid msg sent to receiver");
+                        error!("Server disconnected");
+                        break;
                     }
                 };
             }
             input = user_input.next_line() => {
                 let input = input.unwrap().unwrap();
-                client_state.update_from_user(&input);
+                if let Some(msg) = client_state.update_from_user(&input) {
+                    server_tx.send(msg).await?;
+                }
             }
             _ = signal::ctrl_c() => {
                 break;
@@ -65,8 +69,10 @@ async fn main() -> Result<(), anyhow::Error> {
             }
         }
         // React to state changes
-        if let Some(msg) = client_state.process() {
-            server_tx.send(msg).await?;
+        if !client_state.status.eq(&previous_status) {
+            if let Some(msg) = client_state.process() {
+                server_tx.send(msg).await?;
+            }
         }
     }
 
