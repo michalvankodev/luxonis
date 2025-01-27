@@ -12,6 +12,7 @@ use tokio::{
 mod client_state;
 mod connection;
 mod protocol;
+mod validation;
 
 pub enum ClientConnection {
     Tcp(TcpStream),

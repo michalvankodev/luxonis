@@ -180,17 +180,19 @@ async fn react_to_client_msg(
             debug!("password attempt");
             if password.eq("password") {
                 let response = ServerMessage::AssignId(*player_id);
+                server_state.add_available_player(player_id);
                 send_message(connections, player_id, response).await?;
             }
         }
         ClientMessage::GetOpponents => {
-            let opponents = server_state
-                .available_opponents
-                .iter()
-                .map(|uuid| uuid.to_string())
-                .collect::<Vec<String>>();
+            let opponents = &server_state
+                .available_players
+                .clone()
+                .into_iter()
+                .filter(|player| player.ne(player_id))
+                .collect::<Vec<Uuid>>();
 
-            let response = ServerMessage::ListOpponents(opponents);
+            let response = ServerMessage::ListOpponents(opponents.clone());
             send_message(connections, player_id, response).await?;
         }
         ClientMessage::RequestMatch(_) => todo!(),
@@ -199,7 +201,9 @@ async fn react_to_client_msg(
         ClientMessage::GuessAttempt(_) => todo!(),
         ClientMessage::SendHint(_) => todo!(),
         ClientMessage::GiveUp(_) => todo!(),
-        ClientMessage::LeaveGame => todo!(),
+        ClientMessage::LeaveGame => {
+            server_state.remove_available_player(player_id);
+        }
     }
 
     Ok(())

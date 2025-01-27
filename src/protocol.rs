@@ -14,7 +14,7 @@ pub enum ServerMessage {
     /***
       Response to `GetOpponents`
     */
-    ListOpponents(Vec<String>),
+    ListOpponents(Vec<Uuid>),
     /***
       Response for Challenger that the Match with (Guesser) has been started
     */

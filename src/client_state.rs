@@ -1,8 +1,11 @@
-use indoc::printdoc;
+use indoc::{indoc, printdoc};
 use log::error;
 use uuid::Uuid;
 
-use crate::protocol::{ClientMessage, ServerMessage};
+use crate::{
+    protocol::{ClientMessage, ServerMessage},
+    validation::is_valid_word,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum State {
@@ -10,6 +13,8 @@ pub enum State {
     WaitingForPassword,
     WaitingForPasswordValidation,
     MainMenu,
+    ChoosingOpponent(Vec<Uuid>),
+    ChallengePlayer(Uuid),
     /***
         Quit the application with goodbye msg
     */
@@ -46,7 +51,36 @@ impl ClientState {
                 self.status = State::MainMenu;
             }
             ServerMessage::BadRequest => todo!(),
-            ServerMessage::ListOpponents(_) => todo!(),
+            ServerMessage::ListOpponents(opponents) => {
+                if opponents.is_empty() {
+                    printdoc! {"
+                        No available opponents to match with.
+                        Please wait for other players to connect
+
+                        please specify what action you would like to take by typing a number:
+
+                        (0) Quit
+                        (1) List and challenge available opponents
+                    "}
+                } else {
+                    self.status = State::ChoosingOpponent(opponents.clone());
+                    let text_block = opponents
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, opp)| format!("({}) - {}", idx + 1, opp))
+                        .collect::<Vec<String>>()
+                        .join("\n");
+                    printdoc! {"
+
+                        Available opponents: 
+
+                        {text_block}
+
+                        (0) Go back
+                        
+                    "};
+                }
+            }
             ServerMessage::MatchAccepted(_) => todo!(),
             ServerMessage::MatchDeclined(_) => todo!(),
             ServerMessage::MatchStatus(_) => todo!(),
@@ -60,17 +94,29 @@ impl ClientState {
     }
 
     pub fn update_from_user(&mut self, input: &str) -> Option<ClientMessage> {
-        match self.status {
+        let status = &self.status.clone();
+        match status {
             State::WaitingForPassword => {
                 // TODO maybe we can skip 2 steps and send message directly
                 self.status = State::SendPassword(input.to_string());
                 None
             }
             State::MainMenu => match input {
+                "0" => {
+                    self.status = State::Quit(
+                        indoc! {"
+                        Thank you for tryin out this game.
+                        See you next time!
+                    "}
+                        .to_string(),
+                    );
+                    Some(ClientMessage::LeaveGame)
+                }
                 "1" => {
-                    printdoc! {
-                        "Getting list of available opponents..."
-                    };
+                    printdoc! {"
+                        Getting list of available opponents...
+
+                    "};
                     Some(ClientMessage::GetOpponents)
                 }
                 _ => {
@@ -80,6 +126,52 @@ impl ClientState {
                     None
                 }
             },
+            State::ChoosingOpponent(opponents) => {
+                let challenged_player = input
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|input_idx| opponents.get(input_idx - 1));
+                if let Some(challenged_player) = challenged_player {
+                    self.status = State::ChallengePlayer(*challenged_player);
+                    printdoc! {"
+                        Specify word to guess:
+
+                    "};
+                    None
+                } else {
+                    let text_block = opponents
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, opp)| format!("({}) - {}", idx + 1, opp))
+                        .collect::<Vec<String>>()
+                        .join("\n");
+                    printdoc! {"
+                    Invalid input.
+
+                    Please specify correct number next to the opponent you want to challenge
+
+                    Available opponents: 
+
+                    {text_block}
+
+                    (0) Go back
+                        
+                    "};
+                    None
+                }
+            }
+
+            State::ChallengePlayer(opponent) => {
+                if is_valid_word(input) {
+                    Some(ClientMessage::RequestMatch((*opponent, input.to_string())))
+                } else {
+                    printdoc! {"
+                        Please specify a single word with only alphabetic lowercase characters.
+
+                    "};
+                    None
+                }
+            }
             // State::Quit(_) => {
             //     printdoc!(
             //         r#"
@@ -104,7 +196,10 @@ impl ClientState {
     pub fn process(&mut self) -> Option<ClientMessage> {
         let status = &self.status.clone();
         match status {
-            State::Initial | State::WaitingForPasswordValidation => {
+            State::Initial
+            | State::WaitingForPasswordValidation
+            | State::ChoosingOpponent(_)
+            | State::ChallengePlayer(_) => {
                 // let server_msg = wait_for_server_msg(&mut connection).await?;
                 // client_state.update_from_server(server_msg);
                 None
@@ -131,9 +226,8 @@ impl ClientState {
                 printdoc! {
                     "Please specify what action you would like to take by typing a number:
 
-                    (1) List available opponents
-                    (2) Challenge opponent
-                    (4) Quit
+                    (0) Quit
+                    (1) List and challenge available opponents
                     "
                 };
                 None
