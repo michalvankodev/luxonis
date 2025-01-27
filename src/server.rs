@@ -1,5 +1,4 @@
-use anyhow::anyhow;
-use connection::Connection;
+use connection::{handle_stream, Connection};
 use log::{debug, error, info, trace};
 use protocol::{ClientMessage, ServerMessage};
 use rmp_serde::Serializer;
@@ -7,7 +6,7 @@ use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
     fs::remove_file,
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncWrite},
     net::{TcpListener, UnixListener},
     select, signal,
     sync::{
@@ -109,80 +108,40 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let player_id = Uuid::new_v4();
-    let (mut reader, mut writer) = tokio::io::split(stream);
 
     // Create a channel for sending messages to this client
-    let (client_tx, mut client_rx) = mpsc::channel::<ServerMessage>(100);
+    let (client_tx, mut client_rx) = mpsc::channel::<ClientMessage>(100);
+
+    let client_sender = handle_stream(stream, client_tx).await?;
+
+    tokio::spawn({
+        let conns = connections.clone();
+        async move {
+            // Start receiving messages
+            while let Some(msg) = client_rx.recv().await {
+                let _ = main_tx.send((player_id, msg)).await;
+            }
+            // Remove the connection from the shared HashMap
+            {
+                let mut conns = conns.write().await;
+                info!("Connection with {} closed", player_id);
+                conns.remove(&player_id);
+            }
+        }
+    });
 
     {
         let mut conns = connections.write().await;
         conns.insert(
             player_id,
             Connection {
-                tx: client_tx.clone(),
+                tx: client_sender.clone(),
             },
         );
     }
 
-    println!("Client connected: {}", player_id);
-
-    let _read_task = tokio::spawn({
-        let connections = Arc::clone(connections);
-        async move {
-            let mut buf = vec![0; 1024];
-            loop {
-                trace!("at the start of the loop {:?}", player_id);
-                match reader.read(&mut buf).await {
-                    Ok(0) => {
-                        // Connection closed
-                        println!("Client disconnected: {}", player_id);
-                        break;
-                    }
-                    Ok(n) => {
-                        // Process the message (e.g., routing or broadcasting)
-                        trace!("Message from client received: {:?}", &buf);
-                        if let Ok(msg) = rmp_serde::from_slice::<ClientMessage>(&buf[..n])
-                            .map_err(|e| anyhow!("Error parsing ClientMessage: {e:?}"))
-                        {
-                            trace!("Parsed Message from client: {:?}", msg);
-                            let _ = main_tx.send((player_id, msg)).await;
-
-                            trace!("Message sent to the main tx {:?}", player_id);
-                        };
-                    }
-                    Err(e) => {
-                        eprintln!("Error reading from {}: {:?}", player_id, e);
-                        break;
-                    }
-                }
-                trace!("at the end of the loop {:?}", player_id);
-            }
-
-            // Remove the connection from the shared HashMap
-            {
-                let mut conns = connections.write().await;
-                conns.remove(&player_id);
-            }
-
-            println!("Connection with {} closed", player_id);
-        }
-    });
-
-    let _write_task = tokio::spawn(async move {
-        while let Some(msg) = client_rx.recv().await {
-            trace!("Sending msg {:?}", msg);
-            let mut payload = Vec::new();
-            msg.serialize(&mut Serializer::new(&mut payload)).unwrap();
-
-            if writer.write_all(&payload).await.is_err() {
-                eprintln!("Error writing to {}", player_id);
-                break;
-            }
-            trace!("Message sent {:?}", msg);
-        }
-    });
-
-    let _ = client_tx.send(ServerMessage::AskPassword).await;
+    info!("Client connected: {}", player_id);
+    let _ = client_sender.send(ServerMessage::AskPassword).await;
 
     Ok(())
 }
@@ -226,6 +185,7 @@ async fn react_to_client_msg(
         ClientMessage::GuessAttempt(_) => todo!(),
         ClientMessage::SendHint(_) => todo!(),
         ClientMessage::GiveUp(_) => todo!(),
+        ClientMessage::LeaveGame => todo!(),
     }
 
     Ok(())
