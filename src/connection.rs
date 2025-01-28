@@ -13,15 +13,9 @@ pub struct Connection {
     pub tx: Sender<ServerMessage>,
 }
 
-// There is a possility to save ReadHalf and WriteHalf and have it be the same kind of type
-// pub async fn send_to_connection<T>(stream: &mut WriteHalf<T>, payload: &[u8])
-// where
-//     T: AsyncWriteExt,
-// {
-//     let _ = stream.write_all(payload).await;
-//     let _ = stream.write_all(b"\0").await;
-// }
-
+/// Generic handler for new connection used by client and server.
+/// Creates a new `mpsc::channel` that can be used for sending messages
+/// Creates a green thread for reading and writing to the channels encapsulated by the `mpsc::channel`
 pub async fn handle_stream<S, OutgoingMessageType, IncommingMessageType>(
     stream: S,
     output_tx: Sender<IncommingMessageType>,

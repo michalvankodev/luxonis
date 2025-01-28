@@ -1,26 +1,20 @@
+use client_connection::{create_connection, handle_server_connection};
 use client_state::{ClientState, State};
-use connection::handle_stream;
-use log::{error, info};
-use protocol::{ClientMessage, ServerMessage};
-use std::{env, path::Path, process};
+use log::{debug, error, info};
+use std::{env, process};
 use tokio::{
     io::{stdin, AsyncBufReadExt, BufReader, Stdin},
-    net::{TcpStream, UnixStream},
     select, signal,
-    sync::mpsc::{self, Sender},
+    sync::mpsc::{self},
 };
+
+mod client_connection;
 mod client_state;
 mod connection;
 mod protocol;
 mod validation;
 
-pub enum ClientConnection {
-    Tcp(TcpStream),
-    Unix(UnixStream),
-}
-/***
-  Client for "guess a word" game
-*/
+/// Client application for "guess a word" game
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     env_logger::init();
@@ -72,11 +66,12 @@ async fn main() -> Result<(), anyhow::Error> {
         // React to state changes
         if !client_state.status.eq(&previous_status) {
             if let Some(msg) = client_state.process() {
+                debug!("process {msg:?}");
                 server_tx.send(msg).await?;
             }
         }
 
-        if matches!(client_state.status, State::Quit(_)) {
+        if matches!(client_state.status, State::Quit) {
             break;
         }
     }
@@ -85,39 +80,8 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-async fn handle_server_connection(
-    connection: ClientConnection,
-    output_tx: Sender<ServerMessage>,
-) -> Result<Sender<ClientMessage>, anyhow::Error> {
-    match connection {
-        ClientConnection::Tcp(stream) => handle_stream(stream, output_tx).await,
-        ClientConnection::Unix(stream) => handle_stream(stream, output_tx).await,
-    }
-}
-
-async fn create_connection(input: &str) -> Result<ClientConnection, anyhow::Error> {
-    if is_valid_sock_path(input) {
-        // If it's a Unix socket path
-        info!("Attempting to connect to Unix socket: {}", input);
-        let unix_stream = UnixStream::connect(input).await?;
-        Ok(ClientConnection::Unix(unix_stream))
-    } else {
-        info!("Attempting to connect to TCP address: {}", input);
-        let tcp_stream = TcpStream::connect(input).await?;
-        Ok(ClientConnection::Tcp(tcp_stream))
-    }
-}
-
-fn is_valid_sock_path(path: &str) -> bool {
-    let path = Path::new(path);
-    path.exists() && path.extension().map_or(false, |ext| ext == "sock")
-}
-
 fn get_user_input_stream() -> tokio::io::Lines<BufReader<Stdin>> {
     let stdin = stdin();
     let reader = BufReader::new(stdin);
     reader.lines()
 }
-
-// TODO Documentation
-// TODO readme documentation

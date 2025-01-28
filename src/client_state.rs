@@ -18,10 +18,9 @@ pub enum State {
     ChallengePlayer(Uuid),
     InGameChallenger(Uuid),
     InGameGuesser(Uuid),
-    /***
-        Quit the application with goodbye msg
-    */
-    Quit(String),
+    /// Quit the application with goodbye msg
+    Disconnect(String),
+    Quit,
 }
 
 #[derive(Debug)]
@@ -40,13 +39,14 @@ impl Default for ClientState {
 }
 
 impl ClientState {
+    /// Process message from server
     pub fn update_from_server(&mut self, msg: ServerMessage) {
         match msg {
             ServerMessage::AskPassword => {
                 self.status = State::WaitingForPassword;
             }
             ServerMessage::WrongPassword => {
-                self.status = State::Quit("Wrong password. Please try again!".to_string());
+                self.status = State::Disconnect("Wrong password. Please try again!".to_string());
             }
             ServerMessage::AssignId(id) => {
                 self.player_id = Some(id);
@@ -173,12 +173,16 @@ impl ClientState {
                 self.status = State::MainMenu;
             }
             ServerMessage::Disconnect => {
-                self.status =
-                    State::Quit("Server has unexpectedly ended the connection".to_string());
+                printdoc! {"
+                    Server has unexpectedly disconnected.
+                "};
+
+                self.status = State::Quit;
             }
         }
     }
 
+    /// Update the state and optionally send a new message to the server if appropriate
     pub fn update_from_user(&mut self, input: &str) -> Option<ClientMessage> {
         let status = &self.status.clone();
         match status {
@@ -188,10 +192,9 @@ impl ClientState {
             }
             State::MainMenu => match input {
                 "0" => {
-                    self.status = State::Quit(
+                    self.status = State::Disconnect(
                         indoc! {"
-                        Thank you for tryin out this game.
-                        See you next time!
+                        Thank you for trying out this game.
                     "}
                         .to_string(),
                     );
@@ -280,10 +283,7 @@ impl ClientState {
         }
     }
 
-    // pub fn set_state(&mut self, status: State) {
-    //     self.status = status;
-    // }
-
+    /// Process state changes
     pub fn process(&mut self) -> Option<ClientMessage> {
         let status = &self.status.clone();
         match status {
@@ -292,20 +292,23 @@ impl ClientState {
             | State::ChoosingOpponent(_)
             | State::ChallengePlayer(_)
             | State::InGameChallenger(_)
-            | State::InGameGuesser(_) => None,
+            | State::InGameGuesser(_)
+            | State::Quit => None,
+
             State::WaitingForPassword => {
-                printdoc!(
-                    r#"
+                printdoc! {"
+
                         Welcome to WordGuesser.
                         Please authenticate yourself with a _not really secret_ **password**.
-                    "#
-                );
+                    
+                "};
                 None
             }
             State::SendPassword(password) => {
-                printdoc! {
-                    "Attempting to authenticate with provided password"
-                };
+                printdoc! {"
+                    Attempting to authenticate with provided password
+
+                "};
                 self.status = State::WaitingForPasswordValidation;
                 Some(ClientMessage::AnswerPassword(password.to_string()))
             }
@@ -319,7 +322,7 @@ impl ClientState {
                 };
                 None
             }
-            State::Quit(reason) => {
+            State::Disconnect(reason) => {
                 printdoc!(
                     r#"
                         {reason}
