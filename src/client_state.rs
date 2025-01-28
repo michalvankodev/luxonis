@@ -135,7 +135,7 @@ impl ClientState {
             ServerMessage::IncorrectGuess(_id, attempts) => {
                 printdoc! {"
                     Incorrect. So far, you've made {attempts} attempts.
-                    Try again!
+                    Try again! (Remember you can always `give up`)
 
                 "}
             }
@@ -234,15 +234,15 @@ impl ClientState {
                         .collect::<Vec<String>>()
                         .join("\n");
                     printdoc! {"
-                    Invalid input.
+                        Invalid input.
 
-                    Please specify correct number next to the opponent you want to challenge
+                        Please specify correct number next to the opponent you want to challenge
 
-                    Available opponents: 
+                        Available opponents: 
 
-                    {text_block}
+                        {text_block}
 
-                    (0) Go back
+                        (0) Go back
                         
                     "};
                     None

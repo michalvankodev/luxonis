@@ -248,6 +248,17 @@ pub async fn react_to_client_msg(
                     ),
                 )
                 .await?;
+                send_message(
+                    connections,
+                    &active_match.challenger,
+                    ServerMessage::MatchEnded(
+                        match_id,
+                        active_match.attempts,
+                        active_match.hints.len() as u32,
+                        false,
+                    ),
+                )
+                .await?;
                 server_state.finish_match(match_id);
             } else {
                 send_message(
