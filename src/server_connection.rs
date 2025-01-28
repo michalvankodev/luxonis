@@ -259,7 +259,7 @@ pub async fn react_to_client_msg(
             }
         }
         ClientMessage::LeaveGame => {
-            debug!("player leaving a game");
+            trace!("player leaving a game");
             // Check if player was in a guesser in active games
             let mut matches_to_finish = Vec::<Uuid>::new();
             let guesser_matches = server_state
@@ -310,7 +310,7 @@ pub async fn react_to_client_msg(
                 server_state.finish_match(*match_id);
             });
 
-            debug!("Player is going to be removed");
+            trace!("Player is going to be removed");
             server_state.remove_available_player(player_id);
             send_message(connections, player_id, ServerMessage::Disconnect).await?;
         }

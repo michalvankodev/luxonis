@@ -108,6 +108,3 @@ async fn drop_all_connections(
     }
     Ok(())
 }
-
-// TODO Documentation
-// TODO optimize buffers

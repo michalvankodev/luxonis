@@ -55,25 +55,25 @@ impl ClientState {
             ServerMessage::BadRequest(client_err) => match client_err {
                 ClientRequestError::CannotCreateMatch => {
                     printdoc! {"
-                                Cannot create a match with selected opponent. They are no longer available.
+                        Cannot create a match with selected opponent. They are no longer available.
 
-                            "}
+                    "}
 
                     self.status = State::MainMenu;
                 }
                 ClientRequestError::Match404 => {
                     printdoc! {"
-                                Unexpected error occured. Match doesn't exist anymore. 
+                        Unexpected error occured. Match doesn't exist anymore. 
 
-                            "}
+                    "}
 
                     self.status = State::MainMenu;
                 }
                 ClientRequestError::PermissionDenied => {
                     printdoc! {"
-                                You cannot perform this action.
+                        You cannot perform this action.
 
-                            "}
+                    "}
                 }
             },
             ServerMessage::ListOpponents(opponents) => {
@@ -108,9 +108,9 @@ impl ClientState {
             }
             ServerMessage::MatchAccepted(id) => {
                 printdoc! {"
-                        Match between you and your opponent has started.
+                    Match between you and your opponent has started.
 
-                        If you see your opponent struggling you can provide a hint for them:
+                    If you see your opponent struggling you can provide a hint for them:
                         
                     "};
                 self.status = State::InGameChallenger(id);
@@ -121,30 +121,30 @@ impl ClientState {
 
                         Start guessing!
                         
-                    "};
+                "};
 
                 self.status = State::InGameGuesser(id);
             }
             ServerMessage::MatchAttempt(_id, attempts, hints, latest_attempt) => {
                 printdoc! {"
-                        Opponent has guessed {latest_attempt}.
-                        They've made {attempts} attempts so far and you've given them {hints} hints.
+                    Opponent has guessed {latest_attempt}.
+                    They've made {attempts} attempts so far and you've given them {hints} hints.
 
-                    "}
+                "}
             }
             ServerMessage::IncorrectGuess(_id, attempts) => {
                 printdoc! {"
-                        Incorrect. So far, you've made {attempts} attempts.
-                        Try again!
+                    Incorrect. So far, you've made {attempts} attempts.
+                    Try again!
 
-                    "}
+                "}
             }
             ServerMessage::MatchHint(_id, hint) => {
                 printdoc! {"
-                        Challenger provides a hint:
-                        {hint}
+                    Challenger provides a hint:
+                    {hint}
 
-                    "}
+                "}
             }
             ServerMessage::MatchEnded(_id, attempts, hints, is_solved) => {
                 if matches!(self.status, State::InGameChallenger(_)) {
@@ -173,10 +173,6 @@ impl ClientState {
                 self.status = State::MainMenu;
             }
             ServerMessage::Disconnect => {
-                printdoc! {"
-                    Server has unexpectedly disconnected.
-                "};
-
                 self.status = State::Quit;
             }
         }

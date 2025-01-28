@@ -4,7 +4,7 @@ use log::trace;
 use rmp_serde::Serializer;
 use serde::{Deserialize, Serialize};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
     sync::mpsc::{self, Sender},
 };
 
@@ -26,18 +26,19 @@ where
     OutgoingMessageType: Serialize + for<'a> Deserialize<'a> + std::fmt::Debug + Send + 'static,
     IncommingMessageType: Serialize + for<'a> Deserialize<'a> + std::fmt::Debug + Send + 'static,
 {
-    let (mut reader, mut writer) = tokio::io::split(stream);
+    let (reader, mut writer) = tokio::io::split(stream);
 
     // Create a channel for sending messages to this client
     let (client_tx, mut client_rx) = mpsc::channel::<OutgoingMessageType>(100);
 
     let _read_task = tokio::spawn({
         async move {
-            // TODO optimize buffer
-            let mut buf = vec![0; 1024];
+            let mut buf = Vec::<u8>::new();
+            let mut buf_reader = BufReader::new(reader);
             loop {
+                buf.clear();
                 trace!("at the start of the read task loop",);
-                match reader.read(&mut buf).await {
+                match buf_reader.read_until(b'\n', &mut buf).await {
                     Ok(0) => {
                         // Connection closed
                         // println!("Client disconnected: {}", player_id);
@@ -46,8 +47,9 @@ where
                     Ok(n) => {
                         // Process the message (e.g., routing or broadcasting)
                         trace!("Message from client received: {:?}", &buf);
-                        if let Ok(msg) = rmp_serde::from_slice::<IncommingMessageType>(&buf[..n])
-                            .map_err(|e| anyhow!("Error parsing {e:?}"))
+                        if let Ok(msg) =
+                            rmp_serde::from_slice::<IncommingMessageType>(&buf[..n - 1])
+                                .map_err(|e| anyhow!("Error parsing {e:?}"))
                         {
                             trace!("Parsed Message from stream: {:?}", msg);
                             let _ = output_tx.send(msg).await;
@@ -70,6 +72,7 @@ where
             trace!("Sending msg {:?}", msg);
             let mut payload = Vec::new();
             msg.serialize(&mut Serializer::new(&mut payload)).unwrap();
+            payload.push(b'\n');
 
             if writer.write_all(&payload).await.is_err() {
                 eprintln!("Error writing to stream");
