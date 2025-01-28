@@ -2,15 +2,21 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
+pub enum ClientRequestError {
+    CannotCreateMatch,
+    Match404,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[repr(u8)]
 pub enum ServerMessage {
-    AskPassword = 0,
-    WrongPassword = 1,
+    AskPassword,
+    WrongPassword,
     /***
       ID has been assigned to a new connected client
     */
-    AssignId(Uuid) = 2,
-    BadRequest = 3,
+    AssignId(Uuid),
+    BadRequest(ClientRequestError),
     /***
       Response to `GetOpponents`
     */
@@ -20,24 +26,25 @@ pub enum ServerMessage {
     */
     MatchAccepted(Uuid),
     /***
-      Response for Challenger that the (Guesser) has been declined the match
+      Response for Guesser that the Match(Uuid) has been started
     */
-    MatchDeclined(Uuid),
+    MatchStarted(Uuid),
     /***
       Status message for Challenger about progress of the match
-      (Guesser, attempts)
+      (match_id, attempts, hints, latest_attempt)
     */
-    MatchStatus((Uuid, u32)),
+    MatchAttempt(Uuid, u32, u32, String),
+    IncorrectGuess(Uuid, u32),
     /***
       Challenger can send a hint to Guesser
-      (Challenger, Hint)
+      (match_id, hint)
     */
-    MatchHint((Uuid, String)),
+    MatchHint(Uuid, String),
     /***
       Match can end by either giving up or guessing the correct word
-      (Challenger, Guesser, CorrectAnswer, Attempts)
+      (match_id, attempts, hints, solved)
     */
-    MatchEnded((Uuid, Uuid, bool, u32)),
+    MatchEnded(Uuid, u32, u32, bool),
     Disconnect,
 }
 
@@ -46,11 +53,9 @@ pub enum ServerMessage {
 pub enum ClientMessage {
     AnswerPassword(String),
     GetOpponents,
-    RequestMatch((Uuid, String)),
-    AcceptMatch(Uuid),
-    DeclineMatch(Uuid),
-    GuessAttempt((Uuid, String)),
-    SendHint((Uuid, String)),
+    RequestMatch(Uuid, String),
+    GuessAttempt(Uuid, String),
+    SendHint(Uuid, String),
     GiveUp(Uuid),
     LeaveGame,
 }

@@ -1,9 +1,9 @@
 use connection::{handle_stream, Connection};
 use log::{debug, error, info, trace};
-use protocol::{ClientMessage, ServerMessage};
+use protocol::{ClientMessage, ClientRequestError, ServerMessage};
 use rmp_serde::Serializer;
 use serde::Serialize;
-use server_state::ServerState;
+use server_state::{MatchState, ServerState};
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
     fs::remove_file,
@@ -195,18 +195,22 @@ async fn react_to_client_msg(
             let response = ServerMessage::ListOpponents(opponents.clone());
             send_message(connections, player_id, response).await?;
         }
-        ClientMessage::RequestMatch((opponent, guess_word)) => {
-            if Some(match_id) = server_state.create_new_match((player_id, opponent), guess_word) {
+        ClientMessage::RequestMatch(opponent, guess_word) => {
+            if let Some(match_id) =
+                server_state.create_new_match((player_id, &opponent), &guess_word)
+            {
                 send_message(
                     connections,
                     &opponent,
                     ServerMessage::MatchStarted(match_id),
-                );
+                )
+                .await?;
                 send_message(
                     connections,
-                    &player_id,
+                    player_id,
                     ServerMessage::MatchAccepted(match_id),
-                );
+                )
+                .await?;
             } else {
                 send_message(
                     connections,
@@ -216,10 +220,83 @@ async fn react_to_client_msg(
                 .await?;
             }
         }
-        ClientMessage::AcceptMatch(_) => todo!(),
-        ClientMessage::DeclineMatch(_) => todo!(),
-        ClientMessage::GuessAttempt(_) => todo!(),
-        ClientMessage::SendHint(_) => todo!(),
+        ClientMessage::GuessAttempt(match_id, guess) => {
+            if let Some(active_match) = server_state.active_matches.get_mut(&match_id) {
+                active_match.attempt(&guess);
+
+                match active_match.state {
+                    MatchState::Active => {
+                        send_message(
+                            connections,
+                            &active_match.challenger,
+                            ServerMessage::MatchAttempt(
+                                match_id,
+                                active_match.attempts,
+                                active_match.hints.len() as u32,
+                                guess,
+                            ),
+                        )
+                        .await?;
+                        send_message(
+                            connections,
+                            &active_match.guesser,
+                            ServerMessage::IncorrectGuess(match_id, active_match.attempts),
+                        )
+                        .await?;
+                    }
+                    MatchState::GivenUp => {}
+                    MatchState::Solved => {
+                        send_message(
+                            connections,
+                            &active_match.challenger,
+                            ServerMessage::MatchEnded(
+                                match_id,
+                                active_match.attempts,
+                                active_match.hints.len() as u32,
+                                true,
+                            ),
+                        )
+                        .await?;
+                        send_message(
+                            connections,
+                            &active_match.guesser,
+                            ServerMessage::MatchEnded(
+                                match_id,
+                                active_match.attempts,
+                                active_match.hints.len() as u32,
+                                true,
+                            ),
+                        )
+                        .await?;
+                    }
+                }
+            } else {
+                send_message(
+                    connections,
+                    player_id,
+                    ServerMessage::BadRequest(ClientRequestError::Match404),
+                )
+                .await?;
+            }
+        }
+        ClientMessage::SendHint(match_id, hint) => {
+            if let Some(active_match) = server_state.active_matches.get_mut(&match_id) {
+                active_match.add_hint(&hint);
+                send_message(
+                    connections,
+                    &active_match.guesser,
+                    ServerMessage::MatchHint(match_id, hint),
+                )
+                .await?;
+            } else {
+                send_message(
+                    connections,
+                    player_id,
+                    ServerMessage::BadRequest(ClientRequestError::Match404),
+                )
+                .await?;
+            }
+        }
         ClientMessage::GiveUp(_) => todo!(),
         ClientMessage::LeaveGame => {
             server_state.remove_available_player(player_id);

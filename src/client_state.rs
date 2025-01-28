@@ -3,7 +3,7 @@ use log::error;
 use uuid::Uuid;
 
 use crate::{
-    protocol::{ClientMessage, ServerMessage},
+    protocol::{ClientMessage, ClientRequestError, ServerMessage},
     validation::is_valid_word,
 };
 
@@ -11,15 +11,17 @@ use crate::{
 pub enum State {
     Initial,
     WaitingForPassword,
+    SendPassword(String),
     WaitingForPasswordValidation,
     MainMenu,
     ChoosingOpponent(Vec<Uuid>),
     ChallengePlayer(Uuid),
+    InGameChallenger(Uuid),
+    InGameGuesser(Uuid),
     /***
         Quit the application with goodbye msg
     */
     Quit(String),
-    SendPassword(String),
 }
 
 #[derive(Debug)]
@@ -50,7 +52,24 @@ impl ClientState {
                 self.player_id = Some(id);
                 self.status = State::MainMenu;
             }
-            ServerMessage::BadRequest => todo!(),
+            ServerMessage::BadRequest(client_err) => match client_err {
+                ClientRequestError::CannotCreateMatch => {
+                    printdoc! {"
+                                Cannot create a match with selected opponent. They are no longer available.
+
+                            "}
+
+                    self.status = State::MainMenu;
+                }
+                ClientRequestError::Match404 => {
+                    printdoc! {"
+                                Unexpected error occured. Match doesn't exist anymore. 
+
+                            "}
+
+                    self.status = State::MainMenu;
+                }
+            },
             ServerMessage::ListOpponents(opponents) => {
                 if opponents.is_empty() {
                     printdoc! {"
@@ -81,11 +100,71 @@ impl ClientState {
                     "};
                 }
             }
-            ServerMessage::MatchAccepted(_) => todo!(),
-            ServerMessage::MatchDeclined(_) => todo!(),
-            ServerMessage::MatchStatus(_) => todo!(),
-            ServerMessage::MatchHint(_) => todo!(),
-            ServerMessage::MatchEnded(_) => todo!(),
+            ServerMessage::MatchAccepted(id) => {
+                printdoc! {"
+                        Match between you and your opponent has started.
+
+                        If you see your opponent struggling you can provide a hint for them:
+                        
+                    "};
+                self.status = State::InGameChallenger(id);
+            }
+            ServerMessage::MatchStarted(id) => {
+                printdoc! {"
+                        You have been challenged to a game.
+
+                        Start guessing!
+                        
+                    "};
+
+                self.status = State::InGameGuesser(id);
+            }
+            ServerMessage::MatchAttempt(_id, attempts, hints, latest_attempt) => {
+                printdoc! {"
+                        Opponent has guessed {latest_attempt}.
+                        They've made {attempts} attempts so far and you've given them {hints} hints.
+
+                    "}
+            }
+            ServerMessage::IncorrectGuess(_id, attempts) => {
+                printdoc! {"
+                        Incorrect. So far, you've made {attempts} attempts.
+                        Try again!
+
+                    "}
+            }
+            ServerMessage::MatchHint(_id, hint) => {
+                printdoc! {"
+                        Challenger provides a hint:
+                        {hint}
+
+                    "}
+            }
+            ServerMessage::MatchEnded(_id, attempts, hints, is_solved) => {
+                if matches!(self.status, State::InGameChallenger(_)) {
+                    let solved_msg = if is_solved {
+                        "Your opponent has guessed the right word!"
+                    } else {
+                        "Your opponent has given up"
+                    };
+                    printdoc! {"
+                        {solved_msg}
+                        They took {attempts} attempts. You've given them {hints} hints.
+
+                    "}
+                } else {
+                    let solved_msg = if is_solved {
+                        "Congratulations!!! You have guessed the correct word!"
+                    } else {
+                        "It's OK to admit defeat, better luck next time"
+                    };
+                    printdoc! {"
+                       {solved_msg}
+                           
+                       "}
+                }
+                self.status = State::MainMenu;
+            }
             ServerMessage::Disconnect => {
                 self.status =
                     State::Quit("Server has unexpectedly ended the connection".to_string());
@@ -97,7 +176,6 @@ impl ClientState {
         let status = &self.status.clone();
         match status {
             State::WaitingForPassword => {
-                // TODO maybe we can skip 2 steps and send message directly
                 self.status = State::SendPassword(input.to_string());
                 None
             }
@@ -127,6 +205,10 @@ impl ClientState {
                 }
             },
             State::ChoosingOpponent(opponents) => {
+                if input.eq("0") {
+                    self.status = State::MainMenu;
+                    return None;
+                }
                 let challenged_player = input
                     .parse::<usize>()
                     .ok()
@@ -163,7 +245,7 @@ impl ClientState {
 
             State::ChallengePlayer(opponent) => {
                 if is_valid_word(input) {
-                    Some(ClientMessage::RequestMatch((*opponent, input.to_string())))
+                    Some(ClientMessage::RequestMatch(*opponent, input.to_string()))
                 } else {
                     printdoc! {"
                         Please specify a single word with only alphabetic lowercase characters.
@@ -172,13 +254,12 @@ impl ClientState {
                     None
                 }
             }
-            // State::Quit(_) => {
-            //     printdoc!(
-            //         r#"
-            //             See you next time!
-            //         "#
-            //     );
-            // }
+            State::InGameChallenger(match_id) => {
+                Some(ClientMessage::SendHint(*match_id, input.to_string()))
+            }
+            State::InGameGuesser(match_id) => {
+                Some(ClientMessage::GuessAttempt(*match_id, input.to_string()))
+            }
             _ => {
                 error!(
                     "User shouldn't be able to input anything while in {:?} state",
@@ -189,9 +270,9 @@ impl ClientState {
         }
     }
 
-    pub fn set_state(&mut self, status: State) {
-        self.status = status;
-    }
+    // pub fn set_state(&mut self, status: State) {
+    //     self.status = status;
+    // }
 
     pub fn process(&mut self) -> Option<ClientMessage> {
         let status = &self.status.clone();
@@ -199,11 +280,9 @@ impl ClientState {
             State::Initial
             | State::WaitingForPasswordValidation
             | State::ChoosingOpponent(_)
-            | State::ChallengePlayer(_) => {
-                // let server_msg = wait_for_server_msg(&mut connection).await?;
-                // client_state.update_from_server(server_msg);
-                None
-            }
+            | State::ChallengePlayer(_)
+            | State::InGameChallenger(_)
+            | State::InGameGuesser(_) => None,
             State::WaitingForPassword => {
                 printdoc!(
                     r#"
@@ -211,8 +290,6 @@ impl ClientState {
                         Please authenticate yourself with a _not really secret_ **password**.
                     "#
                 );
-                // let input = wait_for_user_input().await;
-                // client_state.update_from_user(&input);
                 None
             }
             State::SendPassword(password) => {

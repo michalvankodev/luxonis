@@ -1,4 +1,4 @@
-use client_state::ClientState;
+use client_state::{ClientState, State};
 use connection::handle_stream;
 use log::{error, info};
 use protocol::{ClientMessage, ServerMessage};
@@ -74,6 +74,10 @@ async fn main() -> Result<(), anyhow::Error> {
             if let Some(msg) = client_state.process() {
                 server_tx.send(msg).await?;
             }
+        }
+
+        if matches!(client_state.status, State::Quit(_)) {
+            break;
         }
     }
 
