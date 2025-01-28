@@ -69,6 +69,12 @@ impl ClientState {
 
                     self.status = State::MainMenu;
                 }
+                ClientRequestError::PermissionDenied => {
+                    printdoc! {"
+                                You cannot perform this action.
+
+                            "}
+                }
             },
             ServerMessage::ListOpponents(opponents) => {
                 if opponents.is_empty() {
@@ -156,6 +162,7 @@ impl ClientState {
                     let solved_msg = if is_solved {
                         "Congratulations!!! You have guessed the correct word!"
                     } else {
+                        // FIXME match can be cancelled by challenger disconnecting
                         "It's OK to admit defeat, better luck next time"
                     };
                     printdoc! {"
@@ -258,6 +265,9 @@ impl ClientState {
                 Some(ClientMessage::SendHint(*match_id, input.to_string()))
             }
             State::InGameGuesser(match_id) => {
+                if input.eq("give up") {
+                    return Some(ClientMessage::GiveUp(*match_id));
+                }
                 Some(ClientMessage::GuessAttempt(*match_id, input.to_string()))
             }
             _ => {

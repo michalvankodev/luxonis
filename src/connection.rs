@@ -68,14 +68,6 @@ where
                 }
                 trace!("at the end of the read loop");
             }
-
-            // // Remove the connection from the shared HashMap
-            // {
-            //     let mut conns = connections.write().await;
-            //     conns.remove(&player_id);
-            // }
-
-            println!("Connection with closed");
         }
     });
 

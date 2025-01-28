@@ -5,6 +5,7 @@ use uuid::Uuid;
 pub enum ClientRequestError {
     CannotCreateMatch,
     Match404,
+    PermissionDenied,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

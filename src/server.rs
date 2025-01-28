@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use connection::{handle_stream, Connection};
 use log::{debug, error, info, trace};
 use protocol::{ClientMessage, ClientRequestError, ServerMessage};
@@ -98,7 +99,7 @@ async fn main() {
     }
 
     info!("Gracefully shutting down luxonis game server");
-    drop_all_connections(&mut active_connections).await;
+    let _ = drop_all_connections(&mut active_connections).await;
     let _ = remove_file(UNIX_ADDR).await; // Clean up if the file already exists.
 }
 
@@ -156,7 +157,10 @@ async fn send_message(
     msg: ServerMessage,
 ) -> Result<(), anyhow::Error> {
     let mut connections = active_connections.write().await;
-    let connection = connections.get_mut(player_id).unwrap().clone();
+    let connection = connections
+        .get_mut(player_id)
+        .ok_or(anyhow!("Player does no longer exists"))?
+        .clone();
     drop(connections);
 
     trace!("Message about to be sent");
@@ -244,7 +248,6 @@ async fn react_to_client_msg(
                         )
                         .await?;
                     }
-                    MatchState::GivenUp => {}
                     MatchState::Solved => {
                         send_message(
                             connections,
@@ -268,6 +271,14 @@ async fn react_to_client_msg(
                             ),
                         )
                         .await?;
+                        server_state.finish_match(match_id);
+                    }
+                    // No actions needed
+                    MatchState::GivenUp => {
+                        server_state.finish_match(match_id);
+                    }
+                    MatchState::Cancelled => {
+                        server_state.finish_match(match_id);
                     }
                 }
             } else {
@@ -297,8 +308,90 @@ async fn react_to_client_msg(
                 .await?;
             }
         }
-        ClientMessage::GiveUp(_) => todo!(),
+        ClientMessage::GiveUp(match_id) => {
+            if let Some(active_match) = server_state.active_matches.get_mut(&match_id) {
+                if active_match.guesser.ne(player_id) {
+                    send_message(
+                        connections,
+                        player_id,
+                        ServerMessage::BadRequest(ClientRequestError::PermissionDenied),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                active_match.give_up();
+                send_message(
+                    connections,
+                    &active_match.guesser,
+                    ServerMessage::MatchEnded(
+                        match_id,
+                        active_match.attempts,
+                        active_match.hints.len() as u32,
+                        false,
+                    ),
+                )
+                .await?;
+                server_state.finish_match(match_id);
+            } else {
+                send_message(
+                    connections,
+                    player_id,
+                    ServerMessage::BadRequest(ClientRequestError::Match404),
+                )
+                .await?;
+            }
+        }
         ClientMessage::LeaveGame => {
+            // Check if player was in a guesser in active games
+            let mut matches_to_finish = Vec::<Uuid>::new();
+            let guesser_matches = server_state
+                .active_matches
+                .values_mut()
+                .filter(|active_match| active_match.guesser.eq(player_id));
+
+            for active_match in guesser_matches {
+                active_match.give_up();
+
+                send_message(
+                    connections,
+                    &active_match.challenger,
+                    ServerMessage::MatchEnded(
+                        active_match.id,
+                        active_match.attempts,
+                        active_match.hints.len() as u32,
+                        false,
+                    ),
+                )
+                .await?;
+                matches_to_finish.push(active_match.id);
+            }
+
+            let challenger_matches = server_state
+                .active_matches
+                .values_mut()
+                .filter(|active_match| active_match.challenger.eq(player_id));
+
+            for active_match in challenger_matches {
+                active_match.cancel();
+
+                send_message(
+                    connections,
+                    &active_match.guesser,
+                    ServerMessage::MatchEnded(
+                        active_match.id,
+                        active_match.attempts,
+                        active_match.hints.len() as u32,
+                        false,
+                    ),
+                )
+                .await?;
+                matches_to_finish.push(active_match.id);
+            }
+
+            matches_to_finish.iter().for_each(|match_id| {
+                server_state.finish_match(*match_id);
+            });
+
             server_state.remove_available_player(player_id);
         }
     }
@@ -306,8 +399,13 @@ async fn react_to_client_msg(
     Ok(())
 }
 
-async fn drop_all_connections(_active_connections: &mut ActiveConnections) {
-    todo!("Dropping all active connections");
+async fn drop_all_connections(
+    active_connections: &mut ActiveConnections,
+) -> Result<(), anyhow::Error> {
+    for connection in active_connections.write().await.values_mut() {
+        connection.tx.send(ServerMessage::Disconnect).await?;
+    }
+    Ok(())
 }
 
 // TODO Documentation

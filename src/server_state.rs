@@ -8,6 +8,7 @@ pub enum MatchState {
     Active,
     GivenUp,
     Solved,
+    Cancelled,
 }
 
 #[derive(Default)]
@@ -45,6 +46,14 @@ impl Match {
     pub fn add_hint(&mut self, hint: &str) {
         self.hints.push(hint.to_string());
     }
+
+    pub fn give_up(&mut self) {
+        self.state = MatchState::GivenUp;
+    }
+
+    pub fn cancel(&mut self) {
+        self.state = MatchState::Cancelled;
+    }
 }
 
 #[derive(Default)]
@@ -79,5 +88,13 @@ impl ServerState {
         self.available_players.remove(player_duo.1);
 
         Some(id)
+    }
+
+    pub fn finish_match(&mut self, match_id: Uuid) {
+        if let Some(active_match) = self.active_matches.remove(&match_id) {
+            self.add_available_player(&active_match.guesser);
+            self.add_available_player(&active_match.challenger);
+            self.finished_matches.insert(match_id, active_match);
+        }
     }
 }
